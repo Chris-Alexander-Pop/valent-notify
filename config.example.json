@@ -1,0 +1,11 @@
+{
+  "enabled": true,
+  "log_unknown": true,
+  "mute": [
+    "Android System",
+    "System UI",
+    { "pkg": "com.google.android.gms" },
+    { "summary": "(?i)is charging" }
+  ],
+  "apps": []
+}

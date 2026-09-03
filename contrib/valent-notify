@@ -1,0 +1,70 @@
+#!/usr/bin/env bash
+# Control helper for valent-notify (phone notification rewrite + mute).
+set -euo pipefail
+
+CONFIG="${VALENT_NOTIFY_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/valent-notify/config.json}"
+UNKNOWN="${XDG_STATE_HOME:-$HOME/.local/state}/valent-notify/unknown.jsonl"
+SO="${HOME}/.local/lib/libvalent-notify.so"
+
+usage() {
+  cat <<EOF
+Usage: valent-notify <command>
+
+  config     Open the mute/rewrite config in \$EDITOR
+  unknown    Show unmatched Android app names (add these to mute/apps)
+  restart    Restart Valent so the preload reloads
+  status     Show whether the library is loaded
+EOF
+}
+
+ensure_config() {
+  mkdir -p "$(dirname "$CONFIG")"
+  if [[ ! -f "$CONFIG" ]]; then
+    printf '%s\n' '{ "enabled": true, "log_unknown": true, "mute": [], "apps": [] }' >"$CONFIG"
+  fi
+}
+
+cmd="${1:-}"
+case "$cmd" in
+  config)
+    ensure_config
+    exec "${EDITOR:-nano}" "$CONFIG"
+    ;;
+  unknown)
+    if [[ -f "$UNKNOWN" ]]; then
+      cat "$UNKNOWN"
+    else
+      echo "no unknown log yet ($UNKNOWN)"
+    fi
+    ;;
+  restart)
+    pkill -x valent 2>/dev/null || true
+    sleep 0.3
+    exec "$HOME/.local/bin/valent" --gapplication-service
+    ;;
+  status)
+    if [[ -f "$SO" ]]; then
+      echo "library: $SO"
+    else
+      echo "library missing (run: make install)"
+    fi
+    if pgrep -x valent >/dev/null; then
+      pid="$(pgrep -n -x valent)"
+      if tr '\0' '\n' <"/proc/${pid}/environ" 2>/dev/null | grep -Fq 'libvalent-notify.so'; then
+        echo "valent: running with preload"
+      else
+        echo "valent: running WITHOUT preload (valent-notify restart)"
+      fi
+    else
+      echo "valent: not running"
+    fi
+    echo "config: $CONFIG"
+    ;;
+  -h|--help|help|"")
+    usage
+    ;;
+  *)
+    usage >&2
+    exit 2
+    ;;
+esac
