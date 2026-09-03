@@ -12,3 +12,7 @@ gboolean notify_config_reload_if_changed (NotifyConfig *cfg);
 
 const char *notify_config_path (void);
 const char *notify_state_dir (void);
+const char *notify_log_path (void);
+
+void notify_log_event (const NotifyConfig *cfg, const char *app, const char *pkg,
+                       const char *summary, const char *body, const RewriteResult *r);

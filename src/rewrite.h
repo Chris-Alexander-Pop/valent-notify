@@ -22,7 +22,8 @@ typedef struct {
 
 typedef struct {
   gboolean enabled;
-  gboolean log_unknown;
+  gboolean log;         /* log every notification (default true) */
+  gboolean log_unknown; /* also append unmatched apps to unknown.jsonl */
   MuteRule *mutes;
   gsize n_mutes;
   AppRule *apps; /* user overrides, checked before catalog */

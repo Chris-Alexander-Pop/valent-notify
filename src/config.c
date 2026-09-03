@@ -1,5 +1,6 @@
 #include "config.h"
 
+#include <stdio.h>
 #include <string.h>
 #include <glib/gstdio.h>
 #include <json-glib/json-glib.h>
@@ -28,6 +29,100 @@ notify_state_dir (void)
       g_mkdir_with_parents (dir, 0700);
     }
   return dir;
+}
+
+const char *
+notify_log_path (void)
+{
+  static char *path = NULL;
+  if (path == NULL)
+    path = g_build_filename (notify_state_dir (), "notifications.jsonl", NULL);
+  return path;
+}
+
+static char *
+truncate_field (const char *s, gsize max)
+{
+  if (s == NULL)
+    return g_strdup ("");
+  if (g_utf8_strlen (s, -1) <= (glong)max)
+    return g_strdup (s);
+  g_autofree char *cut = g_utf8_substring (s, 0, (glong)max);
+  return g_strconcat (cut, "…", NULL);
+}
+
+void
+notify_log_event (const NotifyConfig *cfg, const char *app, const char *pkg,
+                   const char *summary, const char *body, const RewriteResult *r)
+{
+  g_autoptr (JsonBuilder) builder = NULL;
+  g_autoptr (JsonGenerator) gen = NULL;
+  g_autoptr (JsonNode) root = NULL;
+  g_autoptr (GDateTime) now = NULL;
+  g_autofree char *iso = NULL;
+  g_autofree char *app_s = NULL;
+  g_autofree char *pkg_s = NULL;
+  g_autofree char *sum_s = NULL;
+  g_autofree char *body_s = NULL;
+  g_autofree char *json = NULL;
+  FILE *f;
+
+  if (cfg != NULL && !cfg->log)
+    return;
+
+  now = g_date_time_new_now_local ();
+  iso = g_date_time_format_iso8601 (now);
+  app_s = truncate_field (app, 120);
+  pkg_s = truncate_field (pkg, 120);
+  sum_s = truncate_field (summary, 200);
+  body_s = truncate_field (body, 400);
+
+  builder = json_builder_new ();
+  json_builder_begin_object (builder);
+  json_builder_set_member_name (builder, "ts");
+  json_builder_add_string_value (builder, iso ? iso : "");
+  json_builder_set_member_name (builder, "app");
+  json_builder_add_string_value (builder, app_s);
+  json_builder_set_member_name (builder, "pkg");
+  json_builder_add_string_value (builder, pkg_s);
+  json_builder_set_member_name (builder, "summary");
+  json_builder_add_string_value (builder, sum_s);
+  json_builder_set_member_name (builder, "body");
+  json_builder_add_string_value (builder, body_s);
+  json_builder_set_member_name (builder, "muted");
+  json_builder_add_boolean_value (builder, r && r->muted);
+  json_builder_set_member_name (builder, "mapped");
+  json_builder_add_boolean_value (builder, r && r->mapped);
+  json_builder_set_member_name (builder, "shown_as");
+  json_builder_add_string_value (builder, r && r->app_name ? r->app_name : "");
+  json_builder_set_member_name (builder, "category");
+  json_builder_add_string_value (builder, r && r->category ? r->category : "");
+  json_builder_end_object (builder);
+
+  root = json_builder_get_root (builder);
+  gen = json_generator_new ();
+  json_generator_set_root (gen, root);
+  json = json_generator_to_data (gen, NULL);
+
+  f = fopen (notify_log_path (), "a");
+  if (f)
+    {
+      fputs (json, f);
+      fputc ('\n', f);
+      fclose (f);
+    }
+
+  if (cfg && cfg->log_unknown && r && !r->muted && !r->mapped)
+    {
+      g_autofree char *upath = g_build_filename (notify_state_dir (), "unknown.jsonl", NULL);
+      FILE *uf = fopen (upath, "a");
+      if (uf)
+        {
+          fputs (json, uf);
+          fputc ('\n', uf);
+          fclose (uf);
+        }
+    }
 }
 
 void
@@ -118,6 +213,7 @@ notify_config_load (NotifyConfig *cfg, GError **error)
 
   notify_config_free (cfg);
   cfg->enabled = TRUE;
+  cfg->log = TRUE;
   cfg->log_unknown = TRUE;
 
   if (!g_file_test (path, G_FILE_TEST_EXISTS))
@@ -138,6 +234,7 @@ notify_config_load (NotifyConfig *cfg, GError **error)
 
   obj = json_node_get_object (root);
   cfg->enabled = obj_bool (obj, "enabled", TRUE);
+  cfg->log = obj_bool (obj, "log", TRUE);
   cfg->log_unknown = obj_bool (obj, "log_unknown", TRUE);
 
   if (json_object_has_member (obj, "mute") &&
@@ -178,6 +275,7 @@ notify_config_reload_if_changed (NotifyConfig *cfg)
         return FALSE;
       notify_config_free (cfg);
       cfg->enabled = TRUE;
+      cfg->log = TRUE;
       cfg->log_unknown = TRUE;
       g_loaded_mtime = 0;
       return TRUE;

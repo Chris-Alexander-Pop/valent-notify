@@ -3,6 +3,7 @@
 set -euo pipefail
 
 CONFIG="${VALENT_NOTIFY_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/valent-notify/config.json}"
+LOG="${XDG_STATE_HOME:-$HOME/.local/state}/valent-notify/notifications.jsonl"
 UNKNOWN="${XDG_STATE_HOME:-$HOME/.local/state}/valent-notify/unknown.jsonl"
 SO="${HOME}/.local/lib/libvalent-notify.so"
 
@@ -10,32 +11,185 @@ usage() {
   cat <<EOF
 Usage: valent-notify <command>
 
-  config     Open the mute/rewrite config in \$EDITOR
-  unknown    Show unmatched Android app names (add these to mute/apps)
-  restart    Restart Valent so the preload reloads
-  status     Show whether the library is loaded
+  log [N|-f]  Show recent notifications (default 40). -f follows.
+  unknown     Unmatched Android apps from the log (candidates to map/mute)
+  config      Open the mute/rewrite config in \$EDITOR
+  restart     Restart Valent so the preload reloads
+  status      Show whether the library is loaded
 EOF
 }
 
 ensure_config() {
   mkdir -p "$(dirname "$CONFIG")"
   if [[ ! -f "$CONFIG" ]]; then
-    printf '%s\n' '{ "enabled": true, "log_unknown": true, "mute": [], "apps": [] }' >"$CONFIG"
+    printf '%s\n' '{ "enabled": true, "log": true, "log_unknown": true, "mute": [], "apps": [] }' >"$CONFIG"
   fi
+}
+
+print_log() {
+  local follow=0
+  local n=40
+  if [[ "${1:-}" == "-f" || "${1:-}" == "--follow" ]]; then
+    follow=1
+  elif [[ "${1:-}" =~ ^[0-9]+$ ]]; then
+    n="$1"
+  elif [[ -n "${1:-}" ]]; then
+    echo "usage: valent-notify log [count|-f]" >&2
+    return 2
+  fi
+
+  if [[ ! -f "$LOG" && "$follow" -eq 0 ]]; then
+    echo "no notification log yet ($LOG)"
+    echo "send a phone notification, then run this again."
+    return 0
+  fi
+
+  python3 - "$LOG" "$n" "$follow" <<'PY'
+import json, sys, datetime
+from pathlib import Path
+
+path = Path(sys.argv[1])
+n = int(sys.argv[2])
+follow = sys.argv[3] == "1"
+
+
+def fmt_ts(ts: str) -> str:
+    if not ts:
+        return "??:??:??"
+    try:
+        # 2026-09-02T20:55:01.123-04:00
+        t = ts.replace("Z", "+00:00")
+        dt = datetime.datetime.fromisoformat(t)
+        return dt.strftime("%H:%M:%S")
+    except ValueError:
+        return ts[11:19] if len(ts) >= 19 else ts
+
+
+def show(obj: dict) -> None:
+    flag = "MUTED" if obj.get("muted") else "shown"
+    app = (obj.get("app") or "?").replace("\n", " ")
+    summary = (obj.get("summary") or "").replace("\n", " ")
+    body = (obj.get("body") or "").replace("\n", " ")
+    shown = obj.get("shown_as") or ""
+    extra = ""
+    if shown and shown != app and shown != "__valent-notify-muted__":
+        extra = f"  → {shown}"
+    print(f"{fmt_ts(obj.get('ts', ''))}  {flag:5}  {app}{extra}")
+    if summary:
+        print(f"         {summary}")
+    if body and body != summary:
+        print(f"         {body}")
+    pkg = obj.get("pkg") or ""
+    if pkg:
+        print(f"         pkg {pkg}")
+    print()
+
+
+def parse_line(line: str):
+    line = line.strip()
+    if not line:
+        return None
+    try:
+        return json.loads(line)
+    except json.JSONDecodeError:
+        return None
+
+
+if follow:
+    import time
+    pos = 0
+    if path.exists():
+        with path.open() as f:
+            f.seek(0, 2)
+            pos = f.tell()
+    print(f"following {path}  (Ctrl-C to stop)", file=sys.stderr)
+    while True:
+        if path.exists():
+            with path.open() as f:
+                f.seek(pos)
+                for line in f:
+                    obj = parse_line(line)
+                    if obj:
+                        show(obj)
+                pos = f.tell()
+        time.sleep(0.4)
+else:
+    if not path.exists():
+        sys.exit(0)
+    lines = path.read_text().splitlines()
+    for line in lines[-n:]:
+        obj = parse_line(line)
+        if obj:
+            show(obj)
+PY
+}
+
+print_unknown() {
+  python3 - "$LOG" "$UNKNOWN" <<'PY'
+import json, sys
+from pathlib import Path
+
+main, legacy = Path(sys.argv[1]), Path(sys.argv[2])
+seen = []
+
+def take(path: Path, require_unmapped: bool) -> None:
+    if not path.exists():
+        return
+    for line in path.read_text().splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if require_unmapped and (obj.get("mapped") or obj.get("muted")):
+            continue
+        seen.append(obj)
+
+take(main, True)
+if not seen:
+    take(legacy, False)
+
+if not seen:
+    print("no unmatched apps yet. run: valent-notify log")
+    sys.exit(0)
+
+# unique by app+pkg, last wins
+order = []
+by_key = {}
+for obj in seen:
+    key = (obj.get("app") or "", obj.get("pkg") or "")
+    if key not in by_key:
+        order.append(key)
+    by_key[key] = obj
+
+print("unmatched apps (add to mute or apps in config):\n")
+for key in order:
+    obj = by_key[key]
+    app = obj.get("app") or "?"
+    pkg = obj.get("pkg") or ""
+    summary = obj.get("summary") or ""
+    print(f"  {app}")
+    if pkg:
+        print(f"      pkg: {pkg}")
+    if summary:
+        print(f"      e.g. {summary}")
+    print()
+PY
 }
 
 cmd="${1:-}"
 case "$cmd" in
+  log)
+    print_log "${2:-}"
+    ;;
+  unknown)
+    print_unknown
+    ;;
   config)
     ensure_config
     exec "${EDITOR:-nano}" "$CONFIG"
-    ;;
-  unknown)
-    if [[ -f "$UNKNOWN" ]]; then
-      cat "$UNKNOWN"
-    else
-      echo "no unknown log yet ($UNKNOWN)"
-    fi
     ;;
   restart)
     pkill -x valent 2>/dev/null || true
@@ -59,6 +213,7 @@ case "$cmd" in
       echo "valent: not running"
     fi
     echo "config: $CONFIG"
+    echo "log:    $LOG"
     ;;
   -h|--help|help|"")
     usage

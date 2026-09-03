@@ -138,6 +138,38 @@ test_config_json (void)
   g_rmdir (dir);
 }
 
+static void
+test_log_event (void)
+{
+  g_autofree char *dir = g_dir_make_tmp ("valent-notify-log-XXXXXX", NULL);
+  g_autofree char *log_path = NULL;
+  g_autofree char *contents = NULL;
+  NotifyConfig cfg = { 0 };
+  RewriteResult r = { 0 };
+
+  g_setenv ("XDG_STATE_HOME", dir, TRUE);
+  cfg.enabled = TRUE;
+  cfg.log = TRUE;
+  r.muted = TRUE;
+  r.app_name = g_strdup (VALENT_NOTIFY_MUTED_APP);
+
+  notify_log_event (&cfg, "YouTube", "com.google.android.youtube", "New video", "watch this", &r);
+  rewrite_result_free (&r);
+
+  log_path = g_build_filename (dir, "valent-notify", "notifications.jsonl", NULL);
+  expect (g_file_get_contents (log_path, &contents, NULL, NULL), "log file written");
+  expect (contents && strstr (contents, "\"app\":\"YouTube\"") != NULL, "log has app");
+  expect (contents && strstr (contents, "\"muted\":true") != NULL, "log has muted");
+  expect (contents && strstr (contents, "\"summary\":\"New video\"") != NULL, "log has summary");
+
+  {
+    g_autofree char *statedir = g_build_filename (dir, "valent-notify", NULL);
+    g_unlink (log_path);
+    g_rmdir (statedir);
+  }
+  g_rmdir (dir);
+}
+
 int
 main (void)
 {
@@ -145,6 +177,7 @@ main (void)
   test_match ();
   test_catalog ();
   test_mute_and_override ();
+  test_log_event ();
   test_config_json ();
   if (fails)
     {

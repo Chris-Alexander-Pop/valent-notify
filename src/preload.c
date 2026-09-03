@@ -80,27 +80,6 @@ table (void)
   return g_by_notif;
 }
 
-static void
-log_unknown (const char *app, const char *pkg, const char *summary, const char *body)
-{
-  g_autofree char *path = g_build_filename (notify_state_dir (), "unknown.jsonl", NULL);
-  g_autoptr (GDateTime) now = g_date_time_new_now_local ();
-  g_autofree char *iso = g_date_time_format_iso8601 (now);
-  g_autofree char *a = g_strescape (app ? app : "", NULL);
-  g_autofree char *p = g_strescape (pkg ? pkg : "", NULL);
-  g_autofree char *s = g_strescape (summary ? summary : "", NULL);
-  g_autofree char *b = g_strescape (body ? body : "", NULL);
-  g_autofree char *line = g_strdup_printf (
-      "{\"ts\":\"%s\",\"app\":\"%s\",\"pkg\":\"%s\",\"summary\":\"%s\",\"body\":\"%s\"}\n",
-      iso, a, p, s, b);
-  FILE *f = fopen (path, "a");
-  if (f)
-    {
-      fputs (line, f);
-      fclose (f);
-    }
-}
-
 static char *
 dump_icon (GIcon *icon)
 {
@@ -255,8 +234,7 @@ rewrite_notify_params (GVariant *parameters, NotifCtx *ctx)
   g_mutex_lock (&g_mu);
   ensure_config_locked ();
   r = rewrite_apply (&g_cfg, ctx ? ctx->app_name : NULL, ctx ? ctx->pkg : NULL, summary, body);
-  if (g_cfg.log_unknown && !r.muted && !r.mapped)
-    log_unknown (ctx ? ctx->app_name : NULL, ctx ? ctx->pkg : NULL, summary, body);
+  notify_log_event (&g_cfg, ctx ? ctx->app_name : NULL, ctx ? ctx->pkg : NULL, summary, body, &r);
   dumped = dump_icon (ctx ? ctx->icon : NULL);
   g_mutex_unlock (&g_mu);
 

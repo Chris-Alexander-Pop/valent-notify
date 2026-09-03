@@ -9,6 +9,7 @@ This is a tiny **LD_PRELOAD** middleman. It sits inside Valent, reads the KDE Co
 - `category` is set (`im.received`, `email.arrived`, …)
 - phone PNG icons GLib would drop are dumped and passed as `image-path`
 - `~/.config/valent-notify/config.json` can **mute** by app, package, title, or body
+- every toast is appended to a JSONL log so you can decide what to silence
 
 ## Install
 
@@ -20,6 +21,21 @@ valent-notify restart
 
 `install` copies `~/.local/lib/libvalent-notify.so`, patches `~/.local/bin/valent` to export `LD_PRELOAD`, and tells swaync to ignore the internal mute sink.
 
+## Log
+
+```bash
+valent-notify log        # last 40
+valent-notify log 100
+valent-notify log -f    # follow
+valent-notify unknown     # unmatched app names to map or mute
+```
+
+Raw file: `~/.local/state/valent-notify/notifications.jsonl`
+
+Each line has `ts`, `app`, `pkg`, `summary`, `body`, `muted`, `mapped`, `shown_as`, `category`. See a noisy one, then add it to `mute` in the config.
+
+Set `"log": false` to turn this off.
+
 ## Config
 
 Edit with `valent-notify config` (or the JSON file directly). Changes apply on the next notification (mtime reload). No Valent restart needed for config edits.
@@ -27,6 +43,7 @@ Edit with `valent-notify config` (or the JSON file directly). Changes apply on t
 ```json
 {
   "enabled": true,
+  "log": true,
   "log_unknown": true,
   "mute": [
     "YouTube",
@@ -57,23 +74,16 @@ Mute entries:
 
 `apps` overrides the built-in catalog (Discord, Gmail, Messages, …). `match` / `pkg` use the same exact-or-regex rules.
 
-Unmatched apps still get the raw Android name instead of “Valent”. If `log_unknown` is true they are appended to:
-
-`~/.local/state/valent-notify/unknown.jsonl`
-
-```bash
-valent-notify unknown
-```
-
-Add noisy ones to `mute`, or add an `apps` entry for the right icon / desktop file.
+Unmatched apps still get the raw Android name instead of “Valent”.
 
 ## Commands
 
 ```text
-valent-notify status    # preload loaded?
-valent-notify config    # $EDITOR
-valent-notify unknown    # unmatched log
-valent-notify restart    # bounce Valent
+valent-notify log        # recent notifications (mute fodder)
+valent-notify unknown     # unmatched Android apps
+valent-notify config      # $EDITOR
+valent-notify status      # preload loaded?
+valent-notify restart     # bounce Valent
 ```
 
 ## Notes
