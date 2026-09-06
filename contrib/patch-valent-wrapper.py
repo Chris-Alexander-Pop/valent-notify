@@ -10,7 +10,10 @@ SNIPPET = """
 # valent-notify: rewrite phone notifications (app name / icon / mute)
 _VN_PRELOAD="${HOME}/.local/lib/libvalent-notify.so"
 if [[ -f "$_VN_PRELOAD" ]]; then
-  export LD_PRELOAD="${_VN_PRELOAD}${LD_PRELOAD:+:$LD_PRELOAD}"
+  case ":${LD_PRELOAD:-}:" in
+    *":${_VN_PRELOAD}:"*) ;;
+    *) export LD_PRELOAD="${_VN_PRELOAD}${LD_PRELOAD:+:$LD_PRELOAD}" ;;
+  esac
 fi
 """
 

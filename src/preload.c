@@ -282,8 +282,15 @@ valent_packet_get_string (gpointer packet, const char *key, const char **value)
   g_mutex_lock (&g_mu);
   if (g_strcmp0 (key, "appName") == 0)
     {
+      const char *pkg = NULL;
       g_free (g_pending_app);
       g_pending_app = g_strdup (*value);
+      /* Valent never reads packageName itself, so pull it from the same packet. */
+      if (real_packet_get_string (packet, "packageName", &pkg) && pkg && *pkg)
+        {
+          g_free (g_pending_pkg);
+          g_pending_pkg = g_strdup (pkg);
+        }
     }
   else if (g_strcmp0 (key, "packageName") == 0 || g_strcmp0 (key, "appPackage") == 0)
     {
@@ -338,6 +345,9 @@ notify_filter (GDBusConnection *connection, GDBusMessage *message, gboolean inco
 {
   GVariant *body;
   NotifCtx *ctx = NULL;
+  NotifCtx pending_ctx = { 0 };
+  g_autofree char *fallback_app = NULL;
+  g_autofree char *fallback_pkg = NULL;
   gboolean enabled = FALSE;
 
   (void)connection;
@@ -359,6 +369,15 @@ notify_filter (GDBusConnection *connection, GDBusMessage *message, gboolean inco
   ensure_config_locked ();
   enabled = g_cfg.enabled;
   ctx = g_inflight;
+  /* send_notification may race the packet hooks; still rewrite from pending. */
+  if (ctx == NULL && g_pending_app != NULL)
+    {
+      fallback_app = g_strdup (g_pending_app);
+      fallback_pkg = g_strdup (g_pending_pkg);
+      pending_ctx.app_name = fallback_app;
+      pending_ctx.pkg = fallback_pkg;
+      ctx = &pending_ctx;
+    }
   g_mutex_unlock (&g_mu);
 
   if (!enabled || ctx == NULL)

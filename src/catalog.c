@@ -62,6 +62,9 @@ static const char *spotify_names[] = { "Spotify", NULL };
 static const char *spotify_pkgs[] = { "com.spotify.music", NULL };
 static const char *spotify_desk[] = { "spotify.desktop", "com.spotify.Client.desktop", NULL };
 
+static const char *namida_names[] = { "Namida", NULL };
+static const char *namida_pkgs[] = { "com.namidaco.namida", NULL };
+
 static const char *ig_names[] = { "Instagram", NULL };
 static const char *ig_pkgs[] = { "com.instagram.android", NULL };
 
@@ -121,6 +124,7 @@ static const CatalogEntry CATALOG[] = {
   { cal_names, cal_pkgs, "Calendar", cal_desk, "office-calendar", "appointment-reminder" },
   { photos_names, photos_pkgs, "Photos", NULL, "multimedia-photo-viewer", "device" },
   { spotify_names, spotify_pkgs, "Spotify", spotify_desk, "spotify", "device" },
+  { namida_names, namida_pkgs, "Namida", NULL, "audio-x-generic", "device" },
   { ig_names, ig_pkgs, "Instagram", NULL, "instagram", "im.received" },
   { x_names, x_pkgs, "X", NULL, "twitter", "im.received" },
   { reddit_names, reddit_pkgs, "Reddit", NULL, "reddit", "im.received" },

@@ -51,6 +51,10 @@ test_catalog (void)
   expect (g_strcmp0 (r.app_name, "Gmail") == 0, "gmail name");
   rewrite_result_free (&r);
 
+  expect (catalog_lookup ("Namida", "com.namidaco.namida", &r), "namida pkg");
+  expect (g_strcmp0 (r.app_name, "Namida") == 0, "namida mapped name");
+  rewrite_result_free (&r);
+
   expect (!catalog_lookup ("Totally Unknown App", "com.example.foo", &r), "unknown");
 }
 
@@ -92,6 +96,23 @@ test_mute_and_override (void)
   expect (r.mapped, "discord catalog");
   expect (g_strcmp0 (r.app_name, "Discord") == 0, "discord catalog name");
   rewrite_result_free (&r);
+
+  r = rewrite_apply (&cfg, "Namida", "com.namidaco.namida", "Some Track", "Artist");
+  expect (!r.muted, "namida not muted until listed");
+  expect (r.mapped, "namida catalog");
+  expect (g_strcmp0 (r.app_name, "Namida") == 0, "namida catalog name");
+  rewrite_result_free (&r);
+
+  {
+    MuteRule extra = { 0 };
+    extra.app = g_strdup ("Namida");
+    cfg.mutes = g_renew (MuteRule, cfg.mutes, 3);
+    cfg.mutes[2] = extra;
+    cfg.n_mutes = 3;
+    r = rewrite_apply (&cfg, "Namida", "com.namidaco.namida", "Some Track", "Artist");
+    expect (r.muted, "mute namida now-playing");
+    rewrite_result_free (&r);
+  }
 
   r = rewrite_apply (&cfg, "Weird App", NULL, "Hello", "world");
   expect (!r.muted, "unknown not muted");

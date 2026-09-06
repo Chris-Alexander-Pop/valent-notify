@@ -192,9 +192,20 @@ case "$cmd" in
     exec "${EDITOR:-nano}" "$CONFIG"
     ;;
   restart)
+    runtime="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+    export DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-unix:path=${runtime}/bus}"
+    systemctl --user daemon-reload 2>/dev/null || true
+    systemctl --user stop ca.andyholmes.Valent.service 2>/dev/null || true
     pkill -x valent 2>/dev/null || true
     sleep 0.3
-    exec "$HOME/.local/bin/valent" --gapplication-service
+    if systemctl --user start ca.andyholmes.Valent.service 2>/dev/null; then
+      sleep 0.5
+    else
+      nohup "$HOME/.local/bin/valent" --gapplication-service >/dev/null 2>&1 &
+      disown || true
+      sleep 0.5
+    fi
+    exec "$0" status
     ;;
   status)
     if [[ -f "$SO" ]]; then
@@ -214,6 +225,9 @@ case "$cmd" in
     fi
     echo "config: $CONFIG"
     echo "log:    $LOG"
+    if systemctl --user is-active --quiet ca.andyholmes.Valent.service 2>/dev/null; then
+      echo "unit:   ca.andyholmes.Valent.service (active)"
+    fi
     ;;
   -h|--help|help|"")
     usage

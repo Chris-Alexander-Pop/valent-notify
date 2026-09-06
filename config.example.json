@@ -5,6 +5,8 @@
   "mute": [
     "Android System",
     "System UI",
+    "Namida",
+    { "pkg": "com.namidaco.namida" },
     { "pkg": "com.google.android.gms" },
     { "summary": "(?i)is charging" }
   ],

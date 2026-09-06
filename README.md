@@ -19,7 +19,7 @@ make install
 valent-notify restart
 ```
 
-`install` copies `~/.local/lib/libvalent-notify.so`, patches `~/.local/bin/valent` to export `LD_PRELOAD`, and tells swaync to ignore the internal mute sink.
+`install` copies `~/.local/lib/libvalent-notify.so`, patches `~/.local/bin/valent` to export `LD_PRELOAD`, installs a user systemd/D-Bus unit so activation does not start bare `/usr/bin/valent` (that path keeps every toast labeled **Valent**), and tells swaync to ignore the internal mute sink.
 
 ## Log
 
@@ -90,3 +90,4 @@ valent-notify restart     # bounce Valent
 
 - Click actions still belong to Valent (reply / open-on-phone). We only change how the toast is labeled.
 - Generated stubs live in `~/.local/share/applications/valent-notify-*.desktop` (`NoDisplay=true`).
+- If toasts still say **Valent** with the Valent icon, the preload is not loaded: `valent-notify status` then `valent-notify restart`. Session D-Bus activation of `/usr/bin/valent` skips the wrapper; install puts a systemd user unit in front of that.

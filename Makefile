@@ -32,6 +32,8 @@ install: all test
 		echo "wrote $(HOME)/.config/valent-notify/config.json"; \
 	fi
 	@python3 contrib/patch-valent-wrapper.py
+	@python3 contrib/patch-dbus-service.py
+	@systemctl --user enable ca.andyholmes.Valent.service >/dev/null 2>&1 || true
 	@python3 contrib/patch-swaync.py || true
 	@echo "installed. restart Valent to load the preload (valent-notify restart)"
 
