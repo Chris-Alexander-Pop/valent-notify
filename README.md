@@ -93,3 +93,4 @@ valent-notify restart     # bounce Valent
 - Click actions still belong to Valent (reply / open-on-phone). We only change how the toast is labeled.
 - Generated stubs live in `~/.local/share/applications/valent-notify-*.desktop` (`NoDisplay=true`).
 - If toasts still say **Valent** with the Valent icon, the preload is not loaded: `valent-notify status` then `valent-notify restart`. Session D-Bus activation of `/usr/bin/valent` skips the wrapper; install puts a systemd user unit in front of that.
+- Muted toasts are dropped before swaync (a D-Bus reply is sent so Valent does not retry). SwayNC also ignores `app-name` / `desktop-entry` `__valent-notify-muted__`.

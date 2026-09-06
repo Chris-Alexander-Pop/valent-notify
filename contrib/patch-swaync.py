@@ -6,10 +6,15 @@ import json
 from pathlib import Path
 
 CONFIG = Path.home() / ".config/swaync/config.json"
-KEY = "valent-notify-muted"
-RULE = {
-    "state": "ignored",
-    "app-name": "^__valent-notify-muted__$",
+RULES = {
+    "valent-notify-muted": {
+        "state": "ignored",
+        "app-name": "^__valent-notify-muted__$",
+    },
+    "valent-notify-muted-desktop": {
+        "state": "ignored",
+        "desktop-entry": "^valent-notify-muted$",
+    },
 }
 
 
@@ -19,10 +24,10 @@ def main() -> None:
         return
     data = json.loads(CONFIG.read_text())
     vis = data.setdefault("notification-visibility", {})
-    if vis.get(KEY) == RULE:
+    if all(vis.get(k) == v for k, v in RULES.items()):
         print("swaync already ignores muted valent-notify sink")
         return
-    vis[KEY] = RULE
+    vis.update(RULES)
     CONFIG.write_text(json.dumps(data, indent=2) + "\n")
     print(f"patched {CONFIG}")
 

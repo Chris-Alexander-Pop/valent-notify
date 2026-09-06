@@ -273,7 +273,8 @@ rewrite_notify_params (GVariant *parameters, NotifCtx *ctx)
 
   if (r.muted)
     {
-      new_hints = hints_rebuild (hints, NULL, NULL, NULL);
+      ensure_desktop_file (VALENT_NOTIFY_MUTED_DESKTOP, VALENT_NOTIFY_MUTED_APP, "phone");
+      new_hints = hints_rebuild (hints, VALENT_NOTIFY_MUTED_DESKTOP, NULL, NULL);
       out = g_variant_new ("(susss@as@a{sv}i)", VALENT_NOTIFY_MUTED_APP, replaces, "",
                            summary, body, actions, new_hints, expire);
       rewrite_result_free (&r);
@@ -413,8 +414,20 @@ notify_filter (GDBusConnection *connection, GDBusMessage *message, gboolean inco
 
   {
     GVariant *rewritten = rewrite_notify_params (body, ctx);
+    const char *out_app = NULL;
+
     if (g_variant_is_floating (rewritten))
       g_variant_ref_sink (rewritten);
+    g_variant_get_child (rewritten, 0, "&s", &out_app);
+    if (g_strcmp0 (out_app, VALENT_NOTIFY_MUTED_APP) == 0)
+      {
+        g_autoptr (GDBusMessage) reply = g_dbus_message_new_method_reply (message);
+        g_dbus_message_set_body (reply, g_variant_new ("(u)", (guint32)0));
+        g_dbus_connection_send_message (connection, reply, G_DBUS_SEND_MESSAGE_FLAGS_NONE, NULL,
+                                        NULL);
+        g_variant_unref (rewritten);
+        return NULL;
+      }
     g_dbus_message_set_body (message, rewritten);
     g_variant_unref (rewritten);
   }

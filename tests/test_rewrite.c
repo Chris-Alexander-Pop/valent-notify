@@ -114,6 +114,23 @@ test_mute_and_override (void)
     rewrite_result_free (&r);
   }
 
+  r = rewrite_apply (&cfg, "Weird App", NULL, "[NA] Jane Remover - Summer Fling [(hemera)]",
+                     "Downloaded: 3.88 MB");
+  expect (!r.muted, "download not muted until listed");
+  rewrite_result_free (&r);
+
+  {
+    MuteRule dl = { 0 };
+    dl.body = g_strdup ("(?i)^downloaded:");
+    cfg.mutes = g_renew (MuteRule, cfg.mutes, 4);
+    cfg.mutes[3] = dl;
+    cfg.n_mutes = 4;
+    r = rewrite_apply (&cfg, "Weird App", NULL, "[NA] Jane Remover - Summer Fling [(hemera)]",
+                       "Downloaded: 3.88 MB");
+    expect (r.muted, "mute download complete");
+    rewrite_result_free (&r);
+  }
+
   r = rewrite_apply (&cfg, "Weird App", NULL, "Hello", "world");
   expect (!r.muted, "unknown not muted");
   expect (!r.mapped, "unknown not mapped");

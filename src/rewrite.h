@@ -3,6 +3,7 @@
 #include <glib.h>
 
 #define VALENT_NOTIFY_MUTED_APP "__valent-notify-muted__"
+#define VALENT_NOTIFY_MUTED_DESKTOP "valent-notify-muted"
 
 typedef struct {
   char *app;     /* exact or regex against Android appName */

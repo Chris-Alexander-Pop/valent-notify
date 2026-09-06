@@ -13,6 +13,8 @@
     { "pkg": "com.namidaco.namida" },
     { "pkg": "com.google.android.gms" },
     { "summary": "(?i)^namida$" },
+    { "summary": "(?i)\\[NA\\]" },
+    { "body": "(?i)^downloaded:" },
     { "summary": "(?i)is charging" }
   ],
   "apps": []
