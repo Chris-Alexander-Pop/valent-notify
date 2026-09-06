@@ -45,6 +45,7 @@ Edit with `valent-notify config` (or the JSON file directly). Changes apply on t
   "enabled": true,
   "log": true,
   "log_unknown": true,
+  "mute_media": true,
   "mute": [
     "YouTube",
     { "app": "Android System" },
@@ -71,6 +72,7 @@ Mute entries:
 - `{ "pkg": "com.example.app" }` Android package name
 - `{ "summary": "regex" }` / `{ "body": "regex" }` against title/body
 - several fields on one object are AND
+- `"mute_media": true` (default) drops now-playing toasts with Play/Pause/Next actions, even when the title is the song name
 
 `apps` overrides the built-in catalog (Discord, Gmail, Messages, …). `match` / `pkg` use the same exact-or-regex rules.
 

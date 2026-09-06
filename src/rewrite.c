@@ -176,3 +176,42 @@ rewrite_apply (const NotifyConfig *cfg, const char *app_name, const char *pkg,
   out.app_name = g_strdup (app[0] ? app : "Valent");
   return out;
 }
+
+static gboolean
+token_is_media_control (const char *s)
+{
+  const char *base;
+
+  if (s == NULL || *s == '\0')
+    return FALSE;
+  base = strrchr (s, '.');
+  if (base && base[1])
+    s = base + 1;
+  return g_ascii_strcasecmp (s, "pause") == 0
+      || g_ascii_strcasecmp (s, "play") == 0
+      || g_ascii_strcasecmp (s, "next") == 0
+      || g_ascii_strcasecmp (s, "previous") == 0
+      || g_ascii_strcasecmp (s, "prev") == 0
+      || g_ascii_strcasecmp (s, "skip") == 0
+      || g_ascii_strcasecmp (s, "stop") == 0
+      || g_ascii_strcasecmp (s, "rewind") == 0
+      || g_ascii_strcasecmp (s, "forward") == 0;
+}
+
+gboolean
+vn_fdo_actions_are_media (GVariant *actions)
+{
+  GVariantIter iter;
+  const char *s;
+
+  if (actions == NULL || !g_variant_is_of_type (actions, G_VARIANT_TYPE_STRING_ARRAY))
+    return FALSE;
+
+  g_variant_iter_init (&iter, actions);
+  while (g_variant_iter_next (&iter, "&s", &s))
+    {
+      if (token_is_media_control (s))
+        return TRUE;
+    }
+  return FALSE;
+}

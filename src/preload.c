@@ -23,7 +23,7 @@ static PacketGetStringFn real_packet_get_string;
 static NotifNewFn real_notif_new;
 static NotifSetIconFn real_notif_set_icon;
 static SendNotifFn real_send_notif;
-static guint g_filter_id = 0;
+static GHashTable *g_filtered_conns;
 
 static GMutex g_mu;
 static NotifyConfig g_cfg;
@@ -44,6 +44,31 @@ ensure_reals (void)
     real_notif_set_icon = (NotifSetIconFn)dlsym (RTLD_NEXT, "g_notification_set_icon");
   if (real_send_notif == NULL)
     real_send_notif = (SendNotifFn)dlsym (RTLD_NEXT, "g_application_send_notification");
+}
+
+static void
+capture_packet_identity (gpointer packet)
+{
+  const char *app = NULL;
+  const char *pkg = NULL;
+
+  if (packet == NULL || real_packet_get_string == NULL)
+    return;
+  if (real_packet_get_string (packet, "appName", &app) && app && *app)
+    {
+      g_free (g_pending_app);
+      g_pending_app = g_strdup (app);
+    }
+  if (real_packet_get_string (packet, "packageName", &pkg) && pkg && *pkg)
+    {
+      g_free (g_pending_pkg);
+      g_pending_pkg = g_strdup (pkg);
+    }
+  else if (real_packet_get_string (packet, "appPackage", &pkg) && pkg && *pkg)
+    {
+      g_free (g_pending_pkg);
+      g_pending_pkg = g_strdup (pkg);
+    }
 }
 
 static void
@@ -234,7 +259,15 @@ rewrite_notify_params (GVariant *parameters, NotifCtx *ctx)
   g_mutex_lock (&g_mu);
   ensure_config_locked ();
   r = rewrite_apply (&g_cfg, ctx ? ctx->app_name : NULL, ctx ? ctx->pkg : NULL, summary, body);
-  notify_log_event (&g_cfg, ctx ? ctx->app_name : NULL, ctx ? ctx->pkg : NULL, summary, body, &r);
+  if (!r.muted && g_cfg.mute_media && vn_fdo_actions_are_media (actions))
+    {
+      rewrite_result_free (&r);
+      memset (&r, 0, sizeof (r));
+      r.muted = TRUE;
+      r.app_name = g_strdup (VALENT_NOTIFY_MUTED_APP);
+    }
+  notify_log_event (&g_cfg, ctx && ctx->app_name && ctx->app_name[0] ? ctx->app_name : summary,
+                    ctx ? ctx->pkg : NULL, summary, body, &r);
   dumped = dump_icon (ctx ? ctx->icon : NULL);
   g_mutex_unlock (&g_mu);
 
@@ -280,23 +313,7 @@ valent_packet_get_string (gpointer packet, const char *key, const char **value)
     return ok;
 
   g_mutex_lock (&g_mu);
-  if (g_strcmp0 (key, "appName") == 0)
-    {
-      const char *pkg = NULL;
-      g_free (g_pending_app);
-      g_pending_app = g_strdup (*value);
-      /* Valent never reads packageName itself, so pull it from the same packet. */
-      if (real_packet_get_string (packet, "packageName", &pkg) && pkg && *pkg)
-        {
-          g_free (g_pending_pkg);
-          g_pending_pkg = g_strdup (pkg);
-        }
-    }
-  else if (g_strcmp0 (key, "packageName") == 0 || g_strcmp0 (key, "appPackage") == 0)
-    {
-      g_free (g_pending_pkg);
-      g_pending_pkg = g_strdup (*value);
-    }
+  capture_packet_identity (packet);
   g_mutex_unlock (&g_mu);
   return ok;
 }
@@ -312,13 +329,24 @@ g_notification_new (const char *title)
   n = real_notif_new (title);
 
   g_mutex_lock (&g_mu);
-  if (g_pending_app != NULL)
-    {
-      NotifCtx *c = g_new0 (NotifCtx, 1);
-      c->app_name = g_steal_pointer (&g_pending_app);
-      c->pkg = g_steal_pointer (&g_pending_pkg);
-      g_hash_table_insert (table (), n, c);
-    }
+  {
+    NotifCtx *c = g_new0 (NotifCtx, 1);
+    c->app_name = g_steal_pointer (&g_pending_app);
+    c->pkg = g_steal_pointer (&g_pending_pkg);
+    if ((c->app_name == NULL || c->app_name[0] == '\0') && title && *title)
+      {
+        RewriteResult probe = { 0 };
+        ensure_config_locked ();
+        probe = rewrite_apply (&g_cfg, title, NULL, title, "");
+        if (probe.muted || probe.mapped)
+          {
+            g_free (c->app_name);
+            c->app_name = g_strdup (title);
+          }
+        rewrite_result_free (&probe);
+      }
+    g_hash_table_insert (table (), n, c);
+  }
   g_mutex_unlock (&g_mu);
   return n;
 }
@@ -380,7 +408,7 @@ notify_filter (GDBusConnection *connection, GDBusMessage *message, gboolean inco
     }
   g_mutex_unlock (&g_mu);
 
-  if (!enabled || ctx == NULL)
+  if (!enabled)
     return message;
 
   {
@@ -394,16 +422,24 @@ notify_filter (GDBusConnection *connection, GDBusMessage *message, gboolean inco
 }
 
 static void
-ensure_filter (GApplication *app)
+ensure_filter_on (GDBusConnection *conn)
 {
-  GDBusConnection *conn;
-
-  if (g_filter_id != 0 || app == NULL)
-    return;
-  conn = g_application_get_dbus_connection (app);
   if (conn == NULL)
     return;
-  g_filter_id = g_dbus_connection_add_filter (conn, notify_filter, NULL, NULL);
+  if (g_filtered_conns == NULL)
+    g_filtered_conns = g_hash_table_new (g_direct_hash, g_direct_equal);
+  if (g_hash_table_contains (g_filtered_conns, conn))
+    return;
+  g_dbus_connection_add_filter (conn, notify_filter, NULL, NULL);
+  g_hash_table_insert (g_filtered_conns, conn, conn);
+}
+
+static void
+ensure_filter (GApplication *app)
+{
+  if (app == NULL)
+    return;
+  ensure_filter_on (g_application_get_dbus_connection (app));
 }
 
 void
@@ -430,4 +466,5 @@ __attribute__ ((constructor)) static void
 valent_notify_init (void)
 {
   ensure_reals ();
+  g_printerr ("valent-notify: preload ready\n");
 }

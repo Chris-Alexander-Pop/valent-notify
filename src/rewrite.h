@@ -24,6 +24,7 @@ typedef struct {
   gboolean enabled;
   gboolean log;         /* log every notification (default true) */
   gboolean log_unknown; /* also append unmatched apps to unknown.jsonl */
+  gboolean mute_media;  /* drop play/pause/next now-playing toasts (default true) */
   MuteRule *mutes;
   gsize n_mutes;
   AppRule *apps; /* user overrides, checked before catalog */
@@ -54,3 +55,6 @@ char *vn_first_desktop_id(const char *const *candidates);
 RewriteResult rewrite_apply(const NotifyConfig *cfg, const char *app_name,
                             const char *pkg, const char *summary,
                             const char *body);
+
+/* FDO Notify actions are [id, label, id, label, ...]. True for play/pause/next. */
+gboolean vn_fdo_actions_are_media(GVariant *actions);

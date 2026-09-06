@@ -215,6 +215,7 @@ notify_config_load (NotifyConfig *cfg, GError **error)
   cfg->enabled = TRUE;
   cfg->log = TRUE;
   cfg->log_unknown = TRUE;
+  cfg->mute_media = TRUE;
 
   if (!g_file_test (path, G_FILE_TEST_EXISTS))
     {
@@ -236,6 +237,7 @@ notify_config_load (NotifyConfig *cfg, GError **error)
   cfg->enabled = obj_bool (obj, "enabled", TRUE);
   cfg->log = obj_bool (obj, "log", TRUE);
   cfg->log_unknown = obj_bool (obj, "log_unknown", TRUE);
+  cfg->mute_media = obj_bool (obj, "mute_media", TRUE);
 
   if (json_object_has_member (obj, "mute") &&
       JSON_NODE_HOLDS_ARRAY (json_object_get_member (obj, "mute")))
@@ -277,6 +279,7 @@ notify_config_reload_if_changed (NotifyConfig *cfg)
       cfg->enabled = TRUE;
       cfg->log = TRUE;
       cfg->log_unknown = TRUE;
+      cfg->mute_media = TRUE;
       g_loaded_mtime = 0;
       return TRUE;
     }

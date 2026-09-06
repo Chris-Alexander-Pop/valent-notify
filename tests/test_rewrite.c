@@ -191,6 +191,17 @@ test_log_event (void)
   g_rmdir (dir);
 }
 
+static void
+test_media_actions (void)
+{
+  const char *media[] = { "default", "", "pause", "Pause" };
+  const char *chat[] = { "default", "", "reply", "Reply" };
+  g_autoptr (GVariant) a = g_variant_ref_sink (g_variant_new_strv (media, 4));
+  g_autoptr (GVariant) b = g_variant_ref_sink (g_variant_new_strv (chat, 4));
+  expect (vn_fdo_actions_are_media (a), "pause is media");
+  expect (!vn_fdo_actions_are_media (b), "reply is not media");
+}
+
 int
 main (void)
 {
@@ -200,6 +211,7 @@ main (void)
   test_mute_and_override ();
   test_log_event ();
   test_config_json ();
+  test_media_actions ();
   if (fails)
     {
       fprintf (stderr, "%d failure(s)\n", fails);
