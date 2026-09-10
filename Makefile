@@ -4,18 +4,18 @@ CFLAGS ?= -O2 -g -fPIC -Wall -Wextra -Wno-unused-parameter
 CFLAGS += -Isrc $(shell pkg-config --cflags $(PKG))
 LIBS = $(shell pkg-config --libs $(PKG)) -ldl
 
-SRC = src/rewrite.c src/catalog.c src/config.c
+SRC = src/rewrite.c src/catalog.c src/config.c src/dedupe.c
 PRELOAD_SRC = $(SRC) src/preload.c
 
 .PHONY: all test install uninstall clean
 
 all: build/libvalent-notify.so build/test-rewrite
 
-build/libvalent-notify.so: $(PRELOAD_SRC) src/rewrite.h src/config.h
+build/libvalent-notify.so: $(PRELOAD_SRC) src/rewrite.h src/config.h src/dedupe.h
 	mkdir -p build
 	$(CC) $(CFLAGS) -shared -o $@ $(PRELOAD_SRC) $(LIBS)
 
-build/test-rewrite: tests/test_rewrite.c $(SRC) src/rewrite.h src/config.h
+build/test-rewrite: tests/test_rewrite.c $(SRC) src/rewrite.h src/config.h src/dedupe.h
 	mkdir -p build
 	$(CC) $(CFLAGS) -o $@ tests/test_rewrite.c $(SRC) $(LIBS)
 

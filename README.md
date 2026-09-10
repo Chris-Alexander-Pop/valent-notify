@@ -9,6 +9,7 @@ This is a tiny **LD_PRELOAD** middleman. It sits inside Valent, reads the KDE Co
 - `category` is set (`im.received`, `email.arrived`, …)
 - phone PNG icons GLib would drop are dumped and passed as `image-path`
 - `~/.config/valent-notify/config.json` can **mute** by app, package, title, or body
+- repeats of the same title/body are dropped (phone screen-wake re-sends the shade)
 - every toast is appended to a JSONL log so you can decide what to silence
 
 ## Install
@@ -32,7 +33,7 @@ valent-notify unknown     # unmatched app names to map or mute
 
 Raw file: `~/.local/state/valent-notify/notifications.jsonl`
 
-Each line has `ts`, `app`, `pkg`, `summary`, `body`, `muted`, `mapped`, `shown_as`, `category`. See a noisy one, then add it to `mute` in the config.
+Each line has `ts`, `app`, `pkg`, `id`, `summary`, `body`, `muted`, `mapped`, `deduped`, `shown_as`, `category`. See a noisy one, then add it to `mute` in the config.
 
 Set `"log": false` to turn this off.
 
@@ -46,6 +47,8 @@ Edit with `valent-notify config` (or the JSON file directly). Changes apply on t
   "log": true,
   "log_unknown": true,
   "mute_media": true,
+  "dedupe": true,
+  "dedupe_ttl_hours": 48,
   "mute": [
     "YouTube",
     { "app": "Android System" },
@@ -73,6 +76,7 @@ Mute entries:
 - `{ "summary": "regex" }` / `{ "body": "regex" }` against title/body
 - several fields on one object are AND
 - `"mute_media": true` (default) drops now-playing toasts with Play/Pause/Next actions, even when the title is the song name
+- `"dedupe": true` (default) drops a toast if we already showed that exact app/title/body. Unlocking the phone re-sends every undismissed notification. Valent reuses the id. SwayNC still pops a banner. We suppress the identical content. `"dedupe_ttl_hours"` (default 48) is how long a fingerprint is kept. `0` keeps it until Valent exits (and on disk until you delete `~/.local/state/valent-notify/seen`). Set `"log_deduped": true` to log the suppressed repeats.
 
 `apps` overrides the built-in catalog (Discord, Gmail, Messages, …). `match` / `pkg` use the same exact-or-regex rules.
 
@@ -94,3 +98,4 @@ valent-notify restart     # bounce Valent
 - Generated stubs live in `~/.local/share/applications/valent-notify-*.desktop` (`NoDisplay=true`).
 - If toasts still say **Valent** with the Valent icon, the preload is not loaded: `valent-notify status` then `valent-notify restart`. Session D-Bus activation of `/usr/bin/valent` skips the wrapper; install puts a systemd user unit in front of that.
 - Muted toasts are dropped before swaync (a D-Bus reply is sent so Valent does not retry). SwayNC also ignores `app-name` / `desktop-entry` `__valent-notify-muted__`.
+- Duplicate toasts use that same drop path. Unlocking the phone re-sends every undismissed notification. Valent reuses the id. SwayNC still alerts. We suppress the identical content.

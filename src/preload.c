@@ -1,12 +1,14 @@
 #define _GNU_SOURCE
 
 #include "config.h"
+#include "dedupe.h"
 #include "rewrite.h"
 
 #include <dlfcn.h>
 #include <stdio.h>
 #include <string.h>
 #include <gio/gio.h>
+#include <json-glib/json-glib.h>
 
 typedef gboolean (*PacketGetStringFn) (gpointer packet, const char *key, const char **value);
 typedef GNotification *(*NotifNewFn) (const char *title);
@@ -16,6 +18,7 @@ typedef void (*SendNotifFn) (GApplication *app, const gchar *id, GNotification *
 typedef struct {
   char *app_name;
   char *pkg;
+  char *id;
   GIcon *icon;
 } NotifCtx;
 
@@ -28,10 +31,12 @@ static GHashTable *g_filtered_conns;
 static GMutex g_mu;
 static NotifyConfig g_cfg;
 static gboolean g_cfg_ready = FALSE;
+static DedupeState *g_dedupe;
 static GHashTable *g_by_notif;
 static NotifCtx *g_inflight;
 static char *g_pending_app;
 static char *g_pending_pkg;
+static char *g_pending_id;
 
 static void
 ensure_reals (void)
@@ -46,29 +51,116 @@ ensure_reals (void)
     real_send_notif = (SendNotifFn)dlsym (RTLD_NEXT, "g_application_send_notification");
 }
 
+static const char *
+json_obj_str (JsonObject *o, const char *key)
+{
+  JsonNode *n;
+
+  if (o == NULL)
+    return NULL;
+  n = json_object_get_member (o, key);
+  if (n == NULL || !JSON_NODE_HOLDS_VALUE (n) || json_node_get_value_type (n) != G_TYPE_STRING)
+    return NULL;
+  return json_node_get_string (n);
+}
+
 static void
 capture_packet_identity (gpointer packet)
 {
-  const char *app = NULL;
-  const char *pkg = NULL;
+  JsonNode *node = packet;
+  JsonObject *root;
+  JsonObject *body;
+  JsonNode *bnode;
+  const char *s;
 
-  if (packet == NULL || real_packet_get_string == NULL)
+  if (node == NULL || !JSON_NODE_HOLDS_OBJECT (node))
     return;
-  if (real_packet_get_string (packet, "appName", &app) && app && *app)
+  root = json_node_get_object (node);
+  bnode = json_object_get_member (root, "body");
+  if (bnode == NULL || !JSON_NODE_HOLDS_OBJECT (bnode))
+    return;
+  body = json_node_get_object (bnode);
+
+  s = json_obj_str (body, "appName");
+  if (s && *s)
     {
       g_free (g_pending_app);
-      g_pending_app = g_strdup (app);
+      g_pending_app = g_strdup (s);
     }
-  if (real_packet_get_string (packet, "packageName", &pkg) && pkg && *pkg)
+  s = json_obj_str (body, "packageName");
+  if (s == NULL || *s == '\0')
+    s = json_obj_str (body, "appPackage");
+  if (s && *s)
     {
       g_free (g_pending_pkg);
-      g_pending_pkg = g_strdup (pkg);
+      g_pending_pkg = g_strdup (s);
     }
-  else if (real_packet_get_string (packet, "appPackage", &pkg) && pkg && *pkg)
+  s = json_obj_str (body, "id");
+  if (s && *s)
     {
-      g_free (g_pending_pkg);
-      g_pending_pkg = g_strdup (pkg);
+      g_free (g_pending_id);
+      g_pending_id = g_strdup (s);
     }
+}
+
+static gint64
+dedupe_ttl_us (const NotifyConfig *cfg)
+{
+  if (cfg == NULL || cfg->dedupe_ttl_hours <= 0)
+    return 0;
+  return (gint64)cfg->dedupe_ttl_hours * G_TIME_SPAN_HOUR;
+}
+
+static void
+seed_dedupe_from_log (void)
+{
+  g_autofree char *contents = NULL;
+  g_auto (GStrv) lines = NULL;
+  guint n = 0;
+
+  if (g_dedupe == NULL)
+    return;
+  if (!g_file_get_contents (notify_log_path (), &contents, NULL, NULL) || contents == NULL)
+    return;
+
+  lines = g_strsplit (contents, "\n", -1);
+  for (char **l = lines; l && *l; l++)
+    {
+      g_autoptr (JsonParser) parser = NULL;
+      JsonNode *root;
+      JsonObject *o;
+      const char *app;
+      const char *pkg;
+      const char *summary;
+      const char *body;
+      const char *ts;
+      gint64 us = 0;
+
+      if (**l == '\0')
+        continue;
+      parser = json_parser_new ();
+      if (!json_parser_load_from_data (parser, *l, -1, NULL))
+        continue;
+      root = json_parser_get_root (parser);
+      if (root == NULL || !JSON_NODE_HOLDS_OBJECT (root))
+        continue;
+      o = json_node_get_object (root);
+      app = json_obj_str (o, "app");
+      pkg = json_obj_str (o, "pkg");
+      summary = json_obj_str (o, "summary");
+      body = json_obj_str (o, "body");
+      ts = json_obj_str (o, "ts");
+      if (ts && *ts)
+        {
+          g_autoptr (GDateTime) dt = g_date_time_new_from_iso8601 (ts, NULL);
+          if (dt)
+            us = g_date_time_to_unix (dt) * G_USEC_PER_SEC;
+        }
+      vn_dedupe_ingest (g_dedupe, app, pkg, summary, body, us);
+      n++;
+    }
+  if (n > 0)
+    vn_dedupe_flush (g_dedupe);
 }
 
 static void
@@ -77,12 +169,19 @@ ensure_config_locked (void)
   if (g_cfg_ready)
     {
       notify_config_reload_if_changed (&g_cfg);
+      if (g_dedupe)
+        vn_dedupe_set_ttl (g_dedupe, dedupe_ttl_us (&g_cfg));
       return;
     }
   g_autoptr (GError) err = NULL;
   if (!notify_config_load (&g_cfg, &err))
     g_printerr ("valent-notify: %s\n", err ? err->message : "config load failed");
   g_cfg_ready = TRUE;
+  if (g_dedupe == NULL)
+    {
+      g_dedupe = vn_dedupe_new (dedupe_ttl_us (&g_cfg), notify_seen_path ());
+      seed_dedupe_from_log ();
+    }
 }
 
 static void
@@ -93,6 +192,7 @@ ctx_free (gpointer data)
     return;
   g_free (c->app_name);
   g_free (c->pkg);
+  g_free (c->id);
   g_clear_object (&c->icon);
   g_free (c);
 }
@@ -266,8 +366,25 @@ rewrite_notify_params (GVariant *parameters, NotifCtx *ctx)
       r.muted = TRUE;
       r.app_name = g_strdup (VALENT_NOTIFY_MUTED_APP);
     }
+  if (g_cfg.dedupe)
+    {
+      gboolean repeat = vn_dedupe_should_drop (g_dedupe, ctx ? ctx->app_name : NULL,
+                                                ctx ? ctx->pkg : NULL, summary, body, 0);
+      if (repeat)
+        {
+          r.deduped = TRUE;
+          if (!r.muted)
+            {
+              rewrite_result_free (&r);
+              memset (&r, 0, sizeof (r));
+              r.muted = TRUE;
+              r.deduped = TRUE;
+              r.app_name = g_strdup (VALENT_NOTIFY_MUTED_APP);
+            }
+        }
+    }
   notify_log_event (&g_cfg, ctx && ctx->app_name && ctx->app_name[0] ? ctx->app_name : summary,
-                    ctx ? ctx->pkg : NULL, summary, body, &r);
+                     ctx ? ctx->pkg : NULL, ctx ? ctx->id : NULL, summary, body, &r);
   dumped = dump_icon (ctx ? ctx->icon : NULL);
   g_mutex_unlock (&g_mu);
 
@@ -334,6 +451,7 @@ g_notification_new (const char *title)
     NotifCtx *c = g_new0 (NotifCtx, 1);
     c->app_name = g_steal_pointer (&g_pending_app);
     c->pkg = g_steal_pointer (&g_pending_pkg);
+    c->id = g_steal_pointer (&g_pending_id);
     if ((c->app_name == NULL || c->app_name[0] == '\0') && title && *title)
       {
         RewriteResult probe = { 0 };
@@ -377,6 +495,7 @@ notify_filter (GDBusConnection *connection, GDBusMessage *message, gboolean inco
   NotifCtx pending_ctx = { 0 };
   g_autofree char *fallback_app = NULL;
   g_autofree char *fallback_pkg = NULL;
+  g_autofree char *fallback_id = NULL;
   gboolean enabled = FALSE;
 
   (void)connection;
@@ -403,8 +522,10 @@ notify_filter (GDBusConnection *connection, GDBusMessage *message, gboolean inco
     {
       fallback_app = g_strdup (g_pending_app);
       fallback_pkg = g_strdup (g_pending_pkg);
+      fallback_id = g_strdup (g_pending_id);
       pending_ctx.app_name = fallback_app;
       pending_ctx.pkg = fallback_pkg;
+      pending_ctx.id = fallback_id;
       ctx = &pending_ctx;
     }
   g_mutex_unlock (&g_mu);

@@ -3,6 +3,8 @@
   "log": true,
   "log_unknown": true,
   "mute_media": true,
+  "dedupe": true,
+  "dedupe_ttl_hours": 48,
   "mute": [
     "Android System",
     "System UI",

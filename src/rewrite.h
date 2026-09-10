@@ -26,6 +26,9 @@ typedef struct {
   gboolean log;         /* log every notification (default true) */
   gboolean log_unknown; /* also append unmatched apps to unknown.jsonl */
   gboolean mute_media;  /* drop play/pause/next now-playing toasts (default true) */
+  gboolean dedupe;      /* drop repeat toasts (screen-wake resync) */
+  gboolean log_deduped; /* log suppressed repeats (default false) */
+  gint dedupe_ttl_hours; /* 0 = until Valent exits / persist forever */
   MuteRule *mutes;
   gsize n_mutes;
   AppRule *apps; /* user overrides, checked before catalog */
@@ -35,6 +38,7 @@ typedef struct {
 typedef struct {
   gboolean muted;
   gboolean mapped;
+  gboolean deduped; /* exact app/title/body already shown */
   char *app_name;
   char *desktop_entry;
   char *icon;

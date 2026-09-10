@@ -1,5 +1,6 @@
 #include "rewrite.h"
 #include "config.h"
+#include "dedupe.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -157,6 +158,8 @@ test_config_json (void)
   expect (notify_config_load (&cfg, &err), "load json");
   expect (cfg.n_mutes == 2, "two mutes");
   expect (cfg.n_apps == 1, "one app");
+  expect (cfg.dedupe, "dedupe default on");
+  expect (cfg.dedupe_ttl_hours == 48, "ttl default 48h");
 
   r = rewrite_apply (&cfg, "YouTube", NULL, "x", "");
   expect (r.muted, "json mute app");
@@ -191,7 +194,8 @@ test_log_event (void)
   r.muted = TRUE;
   r.app_name = g_strdup (VALENT_NOTIFY_MUTED_APP);
 
-  notify_log_event (&cfg, "YouTube", "com.google.android.youtube", "New video", "watch this", &r);
+  notify_log_event (&cfg, "YouTube", "com.google.android.youtube", "notif-1", "New video",
+                    "watch this", &r);
   rewrite_result_free (&r);
 
   log_path = g_build_filename (dir, "valent-notify", "notifications.jsonl", NULL);
@@ -199,6 +203,8 @@ test_log_event (void)
   expect (contents && strstr (contents, "\"app\":\"YouTube\"") != NULL, "log has app");
   expect (contents && strstr (contents, "\"muted\":true") != NULL, "log has muted");
   expect (contents && strstr (contents, "\"summary\":\"New video\"") != NULL, "log has summary");
+  expect (contents && strstr (contents, "\"id\":\"notif-1\"") != NULL, "log has id");
+  expect (contents && strstr (contents, "\"deduped\":false") != NULL, "log has deduped");
 
   {
     g_autofree char *statedir = g_build_filename (dir, "valent-notify", NULL);
@@ -206,6 +212,49 @@ test_log_event (void)
     g_rmdir (statedir);
   }
   g_rmdir (dir);
+}
+
+static void
+test_dedupe (void)
+{
+  DedupeState *s = vn_dedupe_new (G_TIME_SPAN_HOUR, NULL);
+  gint64 t0 = 1 * G_TIME_SPAN_SECOND;
+
+  expect (!vn_dedupe_should_drop (s, "Slack", "com.slack", "Linear", "failed", t0),
+          "first shown");
+  expect (vn_dedupe_should_drop (s, "Slack", "com.slack", "Linear", "failed", t0 + 1000),
+          "repeat dropped");
+  expect (!vn_dedupe_should_drop (s, "Slack", "com.slack", "Linear", "new body", t0 + 2000),
+          "new body shown");
+  expect (!vn_dedupe_should_drop (s, "Discord", NULL, "Linear", "failed", t0 + 3000),
+          "other app shown");
+
+  vn_dedupe_set_ttl (s, 5 * G_TIME_SPAN_MILLISECOND);
+  expect (!vn_dedupe_should_drop (s, "Slack", "com.slack", "Linear", "failed", t0 + 20 * G_TIME_SPAN_MILLISECOND),
+          "ttl expired");
+  vn_dedupe_free (s);
+
+  {
+    g_autofree char *dir = g_dir_make_tmp ("valent-notify-seen-XXXXXX", NULL);
+    g_autofree char *path = g_build_filename (dir, "seen", NULL);
+    DedupeState *a = vn_dedupe_new (0, path);
+    DedupeState *b = NULL;
+    expect (!vn_dedupe_should_drop (a, "Gmail", NULL, "Hi", "there", t0), "persist first");
+    vn_dedupe_free (a);
+    b = vn_dedupe_new (0, path);
+    expect (vn_dedupe_should_drop (b, "Gmail", NULL, "Hi", "there", t0 + 1), "persist reload");
+    vn_dedupe_free (b);
+    g_unlink (path);
+    g_rmdir (dir);
+  }
+
+  {
+    DedupeState *c = vn_dedupe_new (G_TIME_SPAN_HOUR, NULL);
+    gint64 now = g_get_real_time ();
+    vn_dedupe_ingest (c, "Slack", NULL, "Alice", "hi", now);
+    expect (vn_dedupe_should_drop (c, "Slack", NULL, "Alice", "hi", now + 1), "ingest then drop");
+    vn_dedupe_free (c);
+  }
 }
 
 static void
@@ -229,6 +278,7 @@ main (void)
   test_log_event ();
   test_config_json ();
   test_media_actions ();
+  test_dedupe ();
   if (fails)
     {
       fprintf (stderr, "%d failure(s)\n", fails);

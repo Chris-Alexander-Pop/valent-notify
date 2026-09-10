@@ -67,6 +67,8 @@ def fmt_ts(ts: str) -> str:
 
 def show(obj: dict) -> None:
     flag = "MUTED" if obj.get("muted") else "shown"
+    if obj.get("deduped"):
+        flag = "DEDUP"
     app = (obj.get("app") or "?").replace("\n", " ")
     summary = (obj.get("summary") or "").replace("\n", " ")
     body = (obj.get("body") or "").replace("\n", " ")

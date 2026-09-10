@@ -40,6 +40,15 @@ notify_log_path (void)
   return path;
 }
 
+const char *
+notify_seen_path (void)
+{
+  static char *path = NULL;
+  if (path == NULL)
+    path = g_build_filename (notify_state_dir (), "seen", NULL);
+  return path;
+}
+
 static char *
 truncate_field (const char *s, gsize max)
 {
@@ -53,7 +62,8 @@ truncate_field (const char *s, gsize max)
 
 void
 notify_log_event (const NotifyConfig *cfg, const char *app, const char *pkg,
-                   const char *summary, const char *body, const RewriteResult *r)
+                   const char *id, const char *summary, const char *body,
+                   const RewriteResult *r)
 {
   g_autoptr (JsonBuilder) builder = NULL;
   g_autoptr (JsonGenerator) gen = NULL;
@@ -68,6 +78,8 @@ notify_log_event (const NotifyConfig *cfg, const char *app, const char *pkg,
   FILE *f;
 
   if (cfg != NULL && !cfg->log)
+    return;
+  if (cfg != NULL && r && r->deduped && !cfg->log_deduped)
     return;
 
   now = g_date_time_new_now_local ();
@@ -85,6 +97,8 @@ notify_log_event (const NotifyConfig *cfg, const char *app, const char *pkg,
   json_builder_add_string_value (builder, app_s);
   json_builder_set_member_name (builder, "pkg");
   json_builder_add_string_value (builder, pkg_s);
+  json_builder_set_member_name (builder, "id");
+  json_builder_add_string_value (builder, id ? id : "");
   json_builder_set_member_name (builder, "summary");
   json_builder_add_string_value (builder, sum_s);
   json_builder_set_member_name (builder, "body");
@@ -93,6 +107,8 @@ notify_log_event (const NotifyConfig *cfg, const char *app, const char *pkg,
   json_builder_add_boolean_value (builder, r && r->muted);
   json_builder_set_member_name (builder, "mapped");
   json_builder_add_boolean_value (builder, r && r->mapped);
+  json_builder_set_member_name (builder, "deduped");
+  json_builder_add_boolean_value (builder, r && r->deduped);
   json_builder_set_member_name (builder, "shown_as");
   json_builder_add_string_value (builder, r && r->app_name ? r->app_name : "");
   json_builder_set_member_name (builder, "category");
@@ -169,6 +185,25 @@ obj_bool (JsonObject *o, const char *key, gboolean def)
   return json_object_get_boolean_member (o, key);
 }
 
+static int
+obj_int (JsonObject *o, const char *key, int def)
+{
+  JsonNode *n;
+  gint64 v;
+
+  if (!json_object_has_member (o, key))
+    return def;
+  n = json_object_get_member (o, key);
+  if (n == NULL || !JSON_NODE_HOLDS_VALUE (n))
+    return def;
+  v = json_node_get_int (n);
+  if (v < 0)
+    return 0;
+  if (v > 24 * 365)
+    return 24 * 365;
+  return (int)v;
+}
+
 static void
 parse_mute_node (JsonNode *n, MuteRule *out)
 {
@@ -216,6 +251,9 @@ notify_config_load (NotifyConfig *cfg, GError **error)
   cfg->log = TRUE;
   cfg->log_unknown = TRUE;
   cfg->mute_media = TRUE;
+  cfg->dedupe = TRUE;
+  cfg->log_deduped = FALSE;
+  cfg->dedupe_ttl_hours = 48;
 
   if (!g_file_test (path, G_FILE_TEST_EXISTS))
     {
@@ -238,6 +276,9 @@ notify_config_load (NotifyConfig *cfg, GError **error)
   cfg->log = obj_bool (obj, "log", TRUE);
   cfg->log_unknown = obj_bool (obj, "log_unknown", TRUE);
   cfg->mute_media = obj_bool (obj, "mute_media", TRUE);
+  cfg->dedupe = obj_bool (obj, "dedupe", TRUE);
+  cfg->log_deduped = obj_bool (obj, "log_deduped", FALSE);
+  cfg->dedupe_ttl_hours = obj_int (obj, "dedupe_ttl_hours", 48);
 
   if (json_object_has_member (obj, "mute") &&
       JSON_NODE_HOLDS_ARRAY (json_object_get_member (obj, "mute")))
@@ -280,6 +321,9 @@ notify_config_reload_if_changed (NotifyConfig *cfg)
       cfg->log = TRUE;
       cfg->log_unknown = TRUE;
       cfg->mute_media = TRUE;
+      cfg->dedupe = TRUE;
+      cfg->log_deduped = FALSE;
+      cfg->dedupe_ttl_hours = 48;
       g_loaded_mtime = 0;
       return TRUE;
     }
